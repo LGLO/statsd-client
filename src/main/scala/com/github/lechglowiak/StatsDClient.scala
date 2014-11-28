@@ -1,6 +1,8 @@
 package com.github.lechglowiak
 
 import java.net.InetSocketAddress
+import java.text.{DecimalFormatSymbols, DecimalFormat}
+import java.util.Locale
 
 import akka.actor._
 import akka.io.{IO, Udp}
@@ -10,36 +12,60 @@ import scala.concurrent.duration._
 
 
 /**
- *  Actual logic of encoding requests and passing them to StatsDSenderActor reference.
- *  Requires ActorRef to sender actor that understands StatsDMessage.
+ * Actual logic of encoding requests and passing them to StatsDSenderActor reference.
+ * Requires ActorRef to sender actor that understands StatsDMessage.
  */
-trait StatsDClient{
+trait StatsDClient {
 
-  def statsDSenderActor : ActorRef
+  def statsDSenderActor: ActorRef
+
+  val df = new DecimalFormat("0.##########", DecimalFormatSymbols.getInstance(Locale.ENGLISH))
 
   /**
    * Sends 'counter' metric for 'key' with optional 'sample' attribute.
+   * With no 'sample' specified it should be accepted by most statsD implementations.
+   * Not all servers accept sample rates.
    */
   def counter(key: String, value: Long, sample: Double = 1.0) = process(key, value.toString, "c", sample)
   /**
+   * Sends 'counter' metric for 'key' with optional 'sample' attribute.
+   * Not all servers accept fractions.
+   */
+  def counterDouble(key: String, value: Double, sample: Double = 1.0) = process(key, df.format(value), "c", sample)
+
+  /**
    * Shorthand for incrementing counter 'key' by 1.
    */
-  def inc(key: String) = counter(key, 1)
+  def inc(key: String) = counter(key, 1l)
 
   /**
    * Shorthand for decrementing counter 'key' by 1.
    */
-  def dec(key: String) = counter(key, -1)
+  def dec(key: String) = counter(key, -1l)
 
   /**
    * Sets value of gauge 'key'.
+   * Most servers accept values in [0, 2**64]
    */
-  def gauge(key: String, value: Double) = process(key, value.toString, "g")
+  def gauge(key: String, value: Long) = process(key, value.toString, "g")
+
+  /**
+   * Sets value of gauge 'key'.
+   * Not all servers accept double values.
+   */
+  def gauge(key: String, value: Double) = process(key, df.format(value), "g")
 
   /**
    * Changes value of gauge 'key' by 'value'.
+   * Sends sign of value in encoded message.
    */
-  def gaugeChange(key: String, value: Double) = process(key, sign(value) + value.toString, "g")
+  def gaugeChange(key: String, value: Long) = process(key, sign(value) + value.toString, "g")
+
+  /**
+   * Changes value of gauge 'key' by 'value'.
+   * Sends sign of value in encoded message.
+   */
+  def gaugeChange(key: String, value: Double) = process(key, sign(value) + df.format(value), "g")
 
   /**
    * Sends timing metric for 'key'.
@@ -67,16 +93,17 @@ trait StatsDClient{
     statsDSenderActor ! StatsDMessage(encodedMetric)
 }
 
-case class StatsDMessage(msg:String)
+case class StatsDMessage(msg: String)
 
-object StatsDClientImpl{
-  def apply(system:ActorSystem, statsDSenderActor:InetSocketAddress, backoff:FiniteDuration, name: String)=
+object StatsDClientImpl {
+  def apply(system: ActorSystem, statsDSenderActor: InetSocketAddress, backoff: FiniteDuration, name: String) =
     system.actorOf(StatsDSenderActor.props(statsDSenderActor, backoff), name)
-  def apply(system:ActorSystem, statsDSenderActor:InetSocketAddress, backoff:FiniteDuration)=
+
+  def apply(system: ActorSystem, statsDSenderActor: InetSocketAddress, backoff: FiniteDuration) =
     system.actorOf(StatsDSenderActor.props(statsDSenderActor, backoff))
 }
 
-class StatsDClientImpl(val statsDSenderActor:ActorRef) extends StatsDClient
+class StatsDClientImpl(val statsDSenderActor: ActorRef) extends StatsDClient
 
 object StatsDSenderActor {
   def props(statsDAddress: InetSocketAddress, backoff: FiniteDuration) =
