@@ -94,6 +94,9 @@ trait StatsDClient {
 }
 
 case class StatsDMessage(msg: String)
+case object GetState
+case object Uninitialized
+case object Ready
 
 object StatsDClientImpl {
   def apply(system: ActorSystem, statsDSenderActor: InetSocketAddress, backoff: FiniteDuration, name: String) =
@@ -129,6 +132,8 @@ class StatsDSenderActor(statsDAddress: InetSocketAddress, backoff: FiniteDuratio
     case Udp.CommandFailed(cmd) =>
       log.debug(s"StatsDSender received CommandFailed: $cmd when uninitialized.")
       actorSystem.scheduler.scheduleOnce(backoff, IO(Udp), Udp.SimpleSender)
+    case GetState =>
+      sender ! Uninitialized
   }
 
   def ready(sender: ActorRef): Receive = {
@@ -138,5 +143,7 @@ class StatsDSenderActor(statsDAddress: InetSocketAddress, backoff: FiniteDuratio
       context.become(uninitialized)
     case StatsDMessage(msg) =>
       sender ! Udp.Send(ByteString(msg), statsDAddress)
+    case GetState =>
+      sender ! Ready
   }
 }
